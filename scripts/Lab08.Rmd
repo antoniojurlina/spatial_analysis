@@ -1,0 +1,486 @@
+---
+title: "Lab 8"
+author: "Antonio Jurlina"
+date: "11/14/2020"
+output: pdf_document
+fontsize: 10pt 
+geometry: margin=1in
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#-------- packages --------
+library(tidyverse)
+library(ggthemes)
+library(gstat)
+library(sp)
+library(sf)
+library(gridExtra)
+library(knitr)
+
+#-------- data --------
+xy <- expand.grid(1:100, 1:100)
+names(xy) <- c('x','y')
+
+#-------- models --------
+#Model_1 spatially random
+formula1=z~1
+c_model1=vgm(psill=1.0, range=0, model='Nug') # random covariance model
+beta1=1
+
+model1 <- gstat(formula=formula1, locations=~x+y, dummy=T, beta=beta1, model=c_model1, nmax=20)
+ff1 <- predict(model1, newdata=xy, nsim=1)
+simd1 <- ff1
+gridded(simd1) = ~x+y
+
+plot1 <- ggplot()+
+	geom_point(data=ff1,aes(x=x,y=y,col=sim1)) +
+	scale_colour_gradient(low="blue",high="green") +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Spatially random") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+#Model_2 linear trend only in x direction
+formula2=z~x+y
+c_model2=vgm(psill=1.0, range=0, model='Nug')
+beta2=c(1,-0.1,0.00) #trend coefficients
+
+model2 <- gstat(formula=formula2, locations=~x+y, dummy=T, beta=beta2, model=c_model2, nmax=20)
+ff2 <- predict(model2, newdata=xy, nsim=1)
+simd2 <- ff2
+gridded(simd2) = ~x+y
+
+plot2 <- ggplot()+
+	geom_point(data=ff2,aes(x=x,y=y,col=sim1)) +
+	scale_colour_gradient(low="blue",high="green") +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Linear trend in x") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+#Model_3 Gaussian spatial dependence only
+formula3=z~1
+c_model3=vgm(psill=.75, range=15, nugget=.25, model='Gau')
+beta3=1
+
+model3 <- gstat(formula=formula3, locations=~x+y, dummy=T, beta=beta3, model=c_model3, nmax=20)
+ff3 <- predict(model3, newdata=xy, nsim=1)
+simd3 <- ff3
+gridded(simd3) = ~x+y
+
+plot3 <- ggplot()+
+	geom_point(data=ff3,aes(x=x,y=y,col=sim1)) +
+	scale_colour_gradient(low="blue",high="green") +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Gaussian spatial dependence") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+#Model_4 linear trend plus Gaussian spatial dependence
+formula4=z~x+y
+c_model4=vgm(psill=.75, range=15, nugget=.25, model='Gau')
+beta4=c(1,-0.1,0.00)
+
+model4 <- gstat(formula=formula4, locations=~x+y, dummy=T, beta=beta4, model=c_model4, nmax=20)
+ff4 <- predict(model4, newdata=xy, nsim=1)
+simd4 <- ff4
+gridded(simd4) = ~x+y
+
+plot4 <- ggplot()+
+	geom_point(data=ff4,aes(x=x,y=y,col=sim1)) +
+	scale_colour_gradient(low="blue",high="green") +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Gausian spatial dependence + linear trend") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+models <- list(model1, model2, model3, model4)
+
+#-------- Spatially random model sampling --------
+sptest1 <- spsample(simd1, 50, type = "random")
+spdf1 <- as.data.frame(sptest1)
+
+plot1.1 <- ggplot()+
+	geom_point(data=ff1,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf1, aes(x=x, y=y), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Simple random sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+sptest1 <- spsample(simd1, 50, type = "stratified")
+spdf1 <- as.data.frame(sptest1)
+
+plot2.1 <- ggplot()+
+	geom_point(data=ff1,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf1, aes(x=x1, y=x2), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Stratified random sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+sptest1 <- spsample(simd1, 50, type = "regular")
+spdf1 <- as.data.frame(sptest1)
+
+plot3.1 <- ggplot()+
+	geom_point(data=ff1,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf1, aes(x=x1, y=x2), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Systematic sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+#-------- First order trend model sampling --------
+sptest2 <- spsample(simd2, 50, type = "random")
+spdf2 <- as.data.frame(sptest2)
+
+plot1.2 <- ggplot()+
+	geom_point(data=ff2,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf2, aes(x=x, y=y), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Simple random sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+sptest2 <- spsample(simd2, 50, type = "stratified")
+spdf2 <- as.data.frame(sptest2)
+
+plot2.2 <- ggplot()+
+	geom_point(data=ff2,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf2, aes(x=x1, y=x2), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Stratified random sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+sptest2 <- spsample(simd2, 50, type = "regular")
+spdf2 <- as.data.frame(sptest2)
+
+plot3.2 <- ggplot()+
+	geom_point(data=ff2,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf2, aes(x=x1, y=x2), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Systematic sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+#-------- Second order trend model sampling --------
+sptest3 <- spsample(simd3, 50, type = "random")
+spdf3 <- as.data.frame(sptest3)
+
+plot1.3 <- ggplot()+
+	geom_point(data=ff3,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf3, aes(x=x, y=y), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Simple random sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+sptest3 <- spsample(simd3, 50, type = "stratified")
+spdf3 <- as.data.frame(sptest3)
+
+plot2.3 <- ggplot()+
+	geom_point(data=ff3,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf3, aes(x=x1, y=x2), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Stratified random sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+sptest3 <- spsample(simd3, 50, type = "regular")
+spdf3 <- as.data.frame(sptest3)
+
+plot3.3 <- ggplot()+
+	geom_point(data=ff3,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf3, aes(x=x1, y=x2), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Systematic sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+#-------- First and second order trend model sampling --------
+sptest4 <- spsample(simd4, 50, type = "random")
+spdf4 <- as.data.frame(sptest4)
+
+plot1.4 <- ggplot()+
+	geom_point(data=ff4,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf4, aes(x=x, y=y), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Simple random sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+sptest4 <- spsample(simd4, 50, type = "stratified")
+spdf4 <- as.data.frame(sptest4)
+
+plot2.4 <- ggplot()+
+	geom_point(data=ff4,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf3, aes(x=x1, y=x2), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Stratified random sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+
+sptest4 <- spsample(simd4, 50, type = "regular")
+spdf4 <- as.data.frame(sptest4)
+
+plot3.4 <- ggplot()+
+	geom_point(data=ff4,aes(x=x,y=y,col=sim1), alpha = 0.7, show.legend = F) +
+	scale_colour_gradient(low="blue",high="green") +
+	geom_point(data=spdf4, aes(x=x1, y=x2), size = 2) +
+	coord_fixed(ratio=1) +
+	theme_minimal() +
+	labs(subtitle = "Systematic sampling") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				plot.margin=unit(c(0,0,0,0),"pt"))
+```
+
+```{r functions, include=FALSE}
+closest_point <- function(sample.pt, grid.data){
+	dist.sq <- (coordinates(grid.data)[,1] - sample.pt[1])^2 +
+		(coordinates(grid.data)[,2] - sample.pt[2])^2
+	return(which.min(dist.sq))
+}
+
+rand_samp <- function (model) {
+	simd <- predict(model, newdata=xy, nsim=1)
+	gridded(simd) = ~x+y
+
+	# Create the locations of the random sample
+	spsamp.pts <- spsample(simd, 50, type = "random")
+	# Extract a two column array of the x and y coords
+	sample.coords <- coordinates(spsamp.pts)
+	# Apply the function closest.point() to each row of the
+	# array sample.coords (i.e., each sample location)
+	samp.pts <- apply(sample.coords, 1, closest_point,
+										grid.data = simd1)
+	# Each element of samp.pts is the index of the population value
+	# closest to the corresponding location in sample.coords
+	data.samp <- simd1$sim1[samp.pts]
+	samp.mean.50.random <- mean(data.samp)
+	prct.err.50.random <- 100 * abs(mean(data.samp) - mean(simd1$sim1)) / mean(simd1$sim1)
+
+	# Create the locations of the random sample
+	spsamp.pts <- spsample(simd, 150, type = "random")
+	# Extract a two column array of the x and y coords
+	sample.coords <- coordinates(spsamp.pts)
+	# Apply the function closest.point() to each row of the
+	# array sample.coords (i.e., each sample location)
+	samp.pts <- apply(sample.coords, 1, closest_point,
+										grid.data = simd1)
+	# Each element of samp.pts is the index of the population value
+	# closest to the corresponding location in sample.coords
+	data.samp <- simd1$sim1[samp.pts]
+	samp.mean.150.random <- mean(data.samp)
+	prct.err.150.random <- 100 * abs(mean(data.samp) - mean(simd1$sim1)) / mean(simd1$sim1)
+
+	# Create the locations of the stratified sample
+	spsamp.pts <- spsample(simd, 50, type = "stratified")
+	# Extract a two column array of the x and y coords
+	sample.coords <- coordinates(spsamp.pts)
+	# Apply the function closest.point() to each row of the
+	# array sample.coords (i.e., each sample location)
+	samp.pts <- apply(sample.coords, 1, closest_point,
+										grid.data = simd1)
+	# Each element of samp.pts is the index of the population value
+	# closest to the corresponding location in sample.coords
+	data.samp <- simd1$sim1[samp.pts]
+	samp.mean.50.stratified <- mean(data.samp)
+	prct.err.50.stratified <- 100 * abs(mean(data.samp) - mean(simd1$sim1)) / mean(simd1$sim1)
+
+	# Create the locations of the stratified sample
+	spsamp.pts <- spsample(simd, 150, type = "stratified")
+	# Extract a two column array of the x and y coords
+	sample.coords <- coordinates(spsamp.pts)
+	# Apply the function closest.point() to each row of the
+	# array sample.coords (i.e., each sample location)
+	samp.pts <- apply(sample.coords, 1, closest_point,
+										grid.data = simd1)
+	# Each element of samp.pts is the index of the population value
+	# closest to the corresponding location in sample.coords
+	data.samp <- simd1$sim1[samp.pts]
+	samp.mean.150.stratified <- mean(data.samp)
+	prct.err.150.stratified <- 100 * abs(mean(data.samp) - mean(simd1$sim1)) / mean(simd1$sim1)
+
+	# Create the locations of the regular sample
+	spsamp.pts <- spsample(simd, 50, type = "regular")
+	# Extract a two column array of the x and y coords
+	sample.coords <- coordinates(spsamp.pts)
+	# Apply the function closest.point() to each row of the
+	# array sample.coords (i.e., each sample location)
+	samp.pts <- apply(sample.coords, 1, closest_point,
+										grid.data = simd1)
+	# Each element of samp.pts is the index of the population value
+	# closest to the corresponding location in sample.coords
+	data.samp <- simd1$sim1[samp.pts]
+	samp.mean.50.regular <- mean(data.samp)
+	prct.err.50.regular <- 100 * abs(mean(data.samp) - mean(simd1$sim1)) / mean(simd1$sim1)
+
+	# Create the locations of the regular sample
+	spsamp.pts <- spsample(simd, 150, type = "regular")
+	# Extract a two column array of the x and y coords
+	sample.coords <- coordinates(spsamp.pts)
+	# Apply the function closest.point() to each row of the
+	# array sample.coords (i.e., each sample location)
+	samp.pts <- apply(sample.coords, 1, closest_point,
+										grid.data = simd1)
+	# Each element of samp.pts is the index of the population value
+	# closest to the corresponding location in sample.coords
+	data.samp <- simd1$sim1[samp.pts]
+	samp.mean.150.regular <- mean(data.samp)
+	prct.err.150.regular <- 100 * abs(mean(data.samp) - mean(simd1$sim1)) / mean(simd1$sim1)
+
+	return(c(samp.mean.50.random, prct.err.50.random,
+					 samp.mean.150.random, prct.err.150.random,
+					 samp.mean.50.stratified, prct.err.50.stratified,
+					 samp.mean.150.stratified, prct.err.150.stratified,
+					 samp.mean.50.regular, prct.err.50.regular,
+					 samp.mean.150.regular, prct.err.150.regular))
+}
+
+cleanup <- function(U, reps) {
+	values1 <- c(1)
+	values2 <- c(2)
+	values3 <- c(3)
+	values4 <- c(4)
+
+	for(i in 1:(reps - 1)) {
+		values1 <- c(values1, last(values1)+4)
+		values2 <- c(values2, last(values2)+4)
+		values3 <- c(values3, last(values3)+4)
+		values4 <- c(values4, last(values4)+4)
+	}
+
+	sims1 <- as.data.frame(U) %>%
+		select(all_of(values1))
+
+	outputs1 <- tibble(mean = apply(sims1, 1, mean),
+				 sd = apply(sims1, 1, sd))
+
+	sims2 <- as.data.frame(U) %>%
+		select(all_of(values2))
+
+	outputs2 <- tibble(mean = apply(sims2, 1, mean),
+										 sd = apply(sims2, 1, sd))
+
+	sims3 <- as.data.frame(U) %>%
+		select(all_of(values3))
+
+	outputs3 <- tibble(mean = apply(sims3, 1, mean),
+										 sd = apply(sims3, 1, sd))
+
+	sims4 <- as.data.frame(U) %>%
+		select(all_of(values4))
+
+	outputs4 <- tibble(mean = apply(sims4, 1, mean),
+										 sd = apply(sims4, 1, sd))
+
+	outputs <- bind_cols(outputs1, outputs2, outputs3, outputs4)
+
+	return(outputs)
+
+}
+```
+
+```{r simulations, include=FALSE}
+returns <- c("sample_mean*50.random", "percent_error*50.random",
+						 "sample_mean*150.random", "percent_error*150.random",
+						 "sample_mean*50.stratified", "percent_error*50.stratified",
+						 "sample_mean*150.stratified", "percent_error*150.stratified",
+						 "sample_mean*50.regular", "percent_error*50.regular",
+						 "sample_mean*150.regular", "percent_error*150.regular")
+
+reps <- 100
+
+U <- replicate(reps, sapply(models, rand_samp))
+
+outputs <- bind_cols(returns, cleanup(U, reps))
+
+names(outputs) <- c("output", "mean1", "sd1", "mean2", "sd2", "mean3", "sd3", "mean4", "sd4")
+
+outputs <- separate(outputs, col = "output", into = c("sample size", "type"), sep = "\\.")
+outputs <- separate(outputs, col = "sample size", into = c("output", "sample size"), sep = "\\*")
+
+outputs <- outputs %>%
+	mutate(output = str_replace(output, pattern = "_", replacement = " "))
+
+```
+
+```{r models, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Simulated models"}
+grid.arrange(plot1, plot2, plot3, plot4)
+```
+
+\newpage
+
+```{r sampling, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Sampling approaches", fig.height=10}
+grid.arrange(plot1.1, plot2.1, plot3.1,
+						 plot1.2, plot2.2, plot3.2,
+						 plot1.3, plot2.3, plot3.3,
+						 plot1.4, plot2.4, plot3.4,
+						 ncol = 2)
+```
+
+\newpage
+
+```{r results, echo=FALSE, message=FALSE, fig.align="center"}
+outputs %>% kable(caption = "Sampling results", digits = 3)
+```
+
+Table 1 shows the results across all sampling approaches, across all 4 models. Means (and standard deviations), 1 through 4, refer to models 1 through 4. Specifically, Model 1 is spatially random, Model 2 has a linear trend in the x direction, Model 3 has a Gaussian spatial dependence and Model 4 combines the linear trend and the Gaussian dependence. Means (and standard deviations), 1 through 4, represent the values calculated over 100 repetitions of the listed sampling approaches. 
+
+In the case of simple random sampling, as the sample size increases from 50 to 150, Model 1 stops having the smallest sampling percent error (7.95%) and Model 4 overtakes (with 1.4% error). Overall, increased sample size reduces percent error across all 4 models. 
+
+In the case of stratified random sampling, as the sample size increases from 50 to 150, Model 3 sampling retains the smallest overall percent error (3.7% with sample size 50 and 6.33% with sample size 150). Overall, increased sample size reduces percent error across almost all models, except for Model 3 where it increases. This indicates that this sampling approach might not be ideal for Model 3. 
+
+In the case of systematic sampling, as the sample size increases from 50 to 150, Models 1,2 and 4 dramatically reduce their percent error while once again Model 3 sees an increase in percent error with a larger sample size. This makes Model 3 drop from having smallest percent error at sample size 50 to having the largest error at sample size 150. 
+
+Overall, notwithstanding the effects of sample size, the best approach to sampling from the Model 1 distribution is systematic and for Models 2, 3, and 4 it is simple random sampling. This is based on sampling percent errors. Each error is actually the average error across a 100 simulations (with the standard deviations of these errors reported as well). 
+
+\newpage
+
+``` {r session, echo = FALSE}
+sessionInfo()
+```

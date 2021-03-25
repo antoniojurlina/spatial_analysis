@@ -1,0 +1,231 @@
+---
+title: "Lab 7"
+author: "Antonio Jurlina"
+date: "11/08/2020"
+output: pdf_document
+fontsize: 10pt 
+geometry: margin=1in
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#-------- packages --------
+library(tidyverse)
+library(sp)
+library(sf)
+library(rebus)
+library(rgdal)
+library(ggthemes)
+library(gstat)
+library(broom)
+library(nlme)
+library(knitr)
+
+#-------- directory and data --------
+paste0(here::here(), "/data") %>% setwd()
+
+folders <- dir()[-(str_detect(dir(), pattern = "\\.") %>% which())]
+
+for(i in seq_along(folders)) {
+	first <- folders[i]
+
+	second <- paste0(getwd(), "/", folders[i]) %>%
+		list.files() %>%
+		.[1] %>%
+		str_remove(pattern = DOT %R% one_or_more(WRD))
+
+	assign(folders[i], readOGR(first, second) %>% st_as_sf())
+}
+
+colnames(nickel) <- tolower(colnames(nickel))
+
+rm(folders, first, second, i, casco, wj, dha_lung, calcium)
+```
+
+```{r math, echo=FALSE, message=FALSE, warning=FALSE, error=FALSE, results=FALSE, fig.align="center"}
+# samples
+set.seed(1234)
+
+sample_size <- floor(0.80*nrow(nickel))
+
+select <- sample(seq_len(nrow(nickel)), size = sample_size)
+
+test <- nickel[select,]
+validation <- nickel[-select,]
+
+combined_data <- bind_rows(test %>%
+	mutate(type = "test"),
+	validation %>%
+	mutate(type = "validation"))
+
+# variograms
+nickel_variogram <- variogram(ni ~ 1, data = test)
+
+spherical_fit <- fit.variogram(nickel_variogram, vgm(800, "Sph", 20000, 200))
+exponential_fit <- fit.variogram(nickel_variogram, vgm(800, "Exp", 20000, 200))
+
+# ordinary kriging
+set.seed(131)
+
+geosp <- as_Spatial(nickel)
+prediction_grid <- spsample(geosp, 1000, type="regular")
+
+test_sp <- as_Spatial(test)
+
+spherical_krige <- krige(formula = ni~1, locations=test_sp, model=spherical_fit,
+							 newdata=prediction_grid, nmax=15)
+
+exponential_krige <- krige(formula = ni~1, locations=test_sp, model=exponential_fit,
+							 newdata=prediction_grid, nmax=15)
+
+plot_data <- bind_rows(spherical_krige %>% as_tibble() %>%
+											 	mutate(fit = "spherical"),
+											 exponential_krige %>% as_tibble() %>%
+											 	mutate(fit = "exponential"))
+
+# validation
+spherical_validation <- krige(ni ~ 1, locations=test_sp, newdata= validation, model=spherical_fit)
+exponential_validation <- krige(ni ~ 1, locations=test_sp, newdata= validation, model=exponential_fit)
+
+spherical_difference<- validation$ni - spherical_validation$var1.pred
+exponential_difference<- validation$ni - exponential_validation$var1.pred
+
+rmseSph <- sqrt(sum(spherical_difference^2)/length(spherical_difference))
+MESph   <- sum(spherical_difference/length(spherical_difference))
+rmseExp <- sqrt(sum(exponential_difference^2)/length(exponential_difference))
+MEExp   <- sum(exponential_difference/length(exponential_difference))
+
+# cross-validation
+spherical_cross_validation <- krige.cv(ni ~ 1, test_sp, model=spherical_fit, nfold=nrow(test_sp))
+exponential_cross_validation <- krige.cv(ni ~ 1, test_sp, model=exponential_fit, nfold=nrow(test_sp))
+
+sphcvmean <- mean(spherical_cross_validation$residual)
+expcvmean <- mean(exponential_cross_validation$residual)
+sphcvrmse <- sqrt(mean(spherical_cross_validation$residual^2))
+expcvrmse <- sqrt(mean(exponential_cross_validation$residual^2))
+sphcvmsdr <- mean((spherical_cross_validation$residual^2)/ (spherical_cross_validation$var1.var))
+expcvmsdr <- mean((exponential_cross_validation$residual^2)/ (exponential_cross_validation$var1.var))
+
+```
+
+Validation sample seems fairly representative of the larger data set, as it has about the same mean and distribution shape. However, the most salient outliers are not captured by the validation data set. 
+
+According to the sum of squared errors across the two variogram model fits, the exponential fit is more suited to our data. According to Figure 6 and Tables 4 and 5, spherical model seems to have lower overall variance across the spatial grid. However, between validation (Table 2) and cross-validation (Table 3), it becomes less clear which model is better overall. 
+
+Looking at Figures 4 and 5, we can see that both exponential and spherical models predict the data with similar accuracy, interpolating values similar to the nearest locational equivalents obtained by sampling nickel (Ni) for the geochemical data set. Both models seem to produce the same geochemical pattern across space. 
+
+```{r boxplot, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Boxplot (test vs. validation samples)"}
+ggplot(combined_data, aes(type, ni)) +
+	geom_boxplot(fill = "gold", color = "black") +
+	stat_summary(fun=mean, geom="point", shape = 21, size = 3, fill = "white") +
+	theme_par() +
+	theme(axis.title.x = element_blank())
+```
+
+```{r histogram, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Histogram (test vs. validation samples)"}
+ggplot(combined_data, aes(ni, color = type, fill = type)) +
+	geom_histogram(alpha = 0.8, show.legend = F) +
+	facet_wrap(~ type) +
+	theme_par() +
+	scale_color_ptol() +
+	scale_fill_ptol()
+```
+
+\newpage
+
+```{r variogram1, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Variogram"}
+plot(nickel_variogram, pch=16)
+```
+
+```{r variogram2, echo=FALSE, message=FALSE, fig.align="center"}
+tibble(SSE = c(attr(spherical_fit, "SSErr"), attr(exponential_fit, "SSErr")),
+			 `variogram fit` = c("spherical", "exponential")) %>%
+	kable(caption = "Sum of squared errors for 2 variogram model fits", digits = 5)
+```
+
+```{r validation, echo=FALSE, message=FALSE, fig.align="center"}
+tibble(RMSE = c(rmseSph, rmseExp),
+			 ME = c(MESph, MEExp),
+			 `variogram fit` = c("spherical", "exponential")) %>%
+	kable(caption = "Validation", digits = 5)
+```
+
+```{r cross_validation, echo=FALSE, message=FALSE, fig.align="center"}
+tibble(RMSE = c(sphcvrmse, expcvrmse),
+			 ME = c(sphcvmean, expcvmean),
+			 MSDR = c(sphcvmsdr, expcvmsdr),
+			 `variogram fit` = c("spherical", "exponential")) %>%
+	kable(caption = "Cross-validation", digits = 5)
+```
+
+\newpage
+
+```{r actual, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Actual data"}
+combined_data %>%
+	filter(type == "test") %>%
+	ggplot(aes(x, y)) +
+	geom_jitter(aes(color=ni), alpha = 0.7) +
+	coord_equal() +
+	scale_color_gradient_tableau() +
+	theme_par() +
+	labs(color = "nickel") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				legend.position = "bottom",
+				legend.key.width=unit(1.5,"cm"),
+				axis.text.y = element_blank(),
+				axis.text.x = element_blank(),
+				axis.ticks = element_blank())
+```
+
+```{r krig_predictions, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Kriging predictions", fig.width = 8}
+plot_data %>%
+	ggplot(aes(x1, x2)) +
+	geom_tile(aes(fill=var1.pred)) +
+	coord_equal() +
+	facet_wrap(~ fit) +
+	scale_fill_gradient_tableau() +
+	theme_par() +
+	labs(fill = "predicted") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				legend.position = "bottom",
+				legend.key.width=unit(1.5,"cm"),
+				axis.text.y = element_blank(),
+				axis.text.x = element_blank(),
+				axis.ticks = element_blank())
+```
+
+```{r krig_variances, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Kriging variance", fig.width = 7}
+plot_data %>%
+	ggplot(aes(x1, x2)) +
+	geom_tile(aes(fill=var1.var)) +
+	coord_equal() +
+	facet_wrap(~ fit) +
+	scale_fill_gradient_tableau() +
+	theme_par() +
+	labs(fill = "variance") +
+	theme(axis.title.x = element_blank(),
+				axis.title.y = element_blank(),
+				legend.position = "bottom",
+				legend.key.width=unit(1.5,"cm"),
+				axis.text.y = element_blank(),
+				axis.text.x = element_blank(),
+				axis.ticks = element_blank())
+```
+
+```{r spherical_krige, echo=FALSE, message=FALSE, fig.align="center"}
+summary(spherical_krige)$data %>% 
+	kable(caption = "Spherical kriging predicted values and variances", digits = 5)
+```
+
+```{r exponential_krige, echo=FALSE, message=FALSE, fig.align="center"}
+summary(exponential_krige)$data %>% 
+	kable(caption = "Exponential kriging predicted values and variances", digits = 5)
+```
+
+\newpage
+
+``` {r session, echo = FALSE}
+sessionInfo()
+```

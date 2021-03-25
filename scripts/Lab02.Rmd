@@ -1,0 +1,218 @@
+---
+title: "Lab 2"
+author: "Antonio Jurlina"
+date: "09/19/2020"
+output: pdf_document
+fontsize: 10pt 
+geometry: margin=0.5in
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#-------- packages --------
+library(tidyverse)
+library(here)
+library(viridisLite)
+library(viridis)
+library(ggthemes)
+library(assertive)
+library(e1071)
+library(broom)
+library(zeallot)
+
+#-------- functions --------
+linear_regression <- function(data, formula){
+	lm(formula, data)
+}
+
+persp_color <- function(data, palette, n_colors = 100) {
+
+	if(any(!is_numeric(data), na.rm = TRUE)) {
+		stop("data contains non-numeric values.")
+	}
+
+	n_rows <- nrow(data)
+	n_cols <- ncol(data)
+
+	jet.colors <- colorRampPalette(palette)
+	color <- jet.colors(n_colors)
+
+	z = data
+
+	zfacet <- z[-1, -1] + z[-1, -n_cols] + z[-n_rows, -1] + z[-n_rows, -n_cols]
+	facetcol <- cut(zfacet, n_colors)
+
+	return(color[facetcol])
+}
+
+#-------- directory and data --------
+paste0(here::here(), "/data") %>% setwd()
+
+phytophthora <- read_csv("phytophthora.csv")
+
+disease <- phytophthora %>%
+	select(row = X, column = Y, disease) %>%
+	pivot_wider(names_from = "column", values_from = "disease") %>%
+	select(-row) %>%
+	as.matrix()
+
+soilm <- phytophthora %>%
+	select(row = X, column = Y, soilm) %>%
+	pivot_wider(names_from = "column", values_from = "soilm") %>%
+	select(-row) %>%
+	as.matrix()
+
+`soil moisture` <- soilm
+
+x <- 1:nrow(soilm) * 3
+y <- 1:ncol(soilm) * 3
+
+#-------- analysis --------
+summary_data <- bind_rows(
+	phytophthora %>%
+		mutate(data = "complete") %>%
+		summarize(data = data[1],
+			        min = min(soilm),
+							median = median(soilm),
+							mean = mean(soilm),
+							max = max(soilm),
+							variance = var(soilm),
+							skewness = skewness(soilm),
+							kurtosis = kurtosis(soilm)),
+	phytophthora %>%
+		mutate(data = recode(as.character(disease),
+												 "0" = "no disease",
+												 "1" = "disease")) %>%
+		group_by(data) %>%
+		summarize(min = min(soilm),
+							median = median(soilm),
+							mean = mean(soilm),
+							max = max(soilm),
+							variance = var(soilm),
+							skewness = skewness(soilm),
+							kurtosis = kurtosis(soilm)) %>%
+		ungroup()
+)
+
+c(lm_estimates, lm_extras) %<-% list(
+	phytophthora %>%
+	linear_regression(soilm ~ X + Y) %>%
+	tidy(),
+	phytophthora %>%
+		linear_regression(soilm ~ X + Y) %>%
+		glance()
+	)
+
+soilm_model <- phytophthora %>%
+	select(row = X, column = Y, soilm) %>%
+	group_by(row, column) %>%
+	mutate(soilm = lm_estimates[1, 2] + lm_estimates[2, 2]*row + lm_estimates[3, 2]*column) %>%
+	pivot_wider(names_from = "column", values_from = "soilm") %>%
+	ungroup() %>%
+	select(-row) %>%
+	as.matrix.data.frame()
+
+trend <- medpolish(soilm)
+
+fit <- matrix(nrow = length(x), ncol = length(y))
+
+for (i in seq_along(x)){
+	for (j in seq_along(y)){
+		fit[i,j] <- trend$row[i] + trend$col[j] + trend$overall
+	}}
+```
+
+## **Data Overview**
+
+```{r summary, echo=FALSE, message=FALSE, fig.align="center", fig.cap = "soil moisture distribution (with medians)"}
+phytophthora %>%
+	mutate(disease = factor(disease)) %>%
+	ggplot(aes(x = soilm, color = disease, fill = disease)) +
+	geom_histogram(position = "dodge", alpha = 0.5) +
+	geom_vline(aes(xintercept = summary_data$median[1]), linetype = "dashed") +
+	geom_vline(aes(xintercept = summary_data$median[2]), linetype = "dashed", color = "#BB5566") +
+	geom_vline(aes(xintercept = summary_data$median[3]), linetype = "dashed", color = "#004488") +
+	theme_classic() +
+	scale_color_ptol() +
+	scale_fill_ptol() +
+	labs(x = "soil moisture") +
+	theme(legend.position = c(0.8,0.8),
+				axis.title.y = element_blank())
+
+summary_data %>% knitr::kable(caption = "summary statistics")
+```
+
+Plot in Figure 1 is a histogram of all soil moisture data points, colored by whether there is known phytophthora presence in that area of measurement. Dashed lines represent the medians. The black one is the median for the entire data set, while the other two represent the medians of groups with and without phytophthora As can be seen, there is a significant outlier with soil moisture, with phytophthora present. All relevant descriptive values can be found in Table 1.
+
+```{r overview1, echo=FALSE, message=FALSE, fig.align="center", fig.cap = "spatial patterns"}
+phytophthora %>%
+	mutate(disease = factor(disease),
+				 `soil moisture` = soilm) %>%
+	ggplot(aes(X, Y, fill = `soil moisture`, color = disease, size = `soil moisture`)) +
+	geom_point(aes(), shape = 21) +
+	scale_fill_viridis(direction = -1, option = "E") +
+	scale_color_calc() +
+	theme_light() +
+	theme(axis.title = element_blank())
+```
+
+Figure 2 represents the bird's eye view of the data distribution, with size and fill of each circle corresponding to the moisture level, and the edges of circles corresponding to the presence of disease. As can be seen, most of the moisture can be found in one corner of the field (with phytophthora present there as well). The outlier (where soil moisture is highest) can be found in this very corner. 
+Figure 3 is the same data, just plotted in 3rd space, with soil moisture (left) and phytophthora (right). The black spatial patterns in the right graph indicate the presence of phytophthora and they parallel the presence of high soil moisture levels fairly well.
+
+```{r overview2, echo=FALSE, message=FALSE, fig.show="hold", out.width="50%", fig.cap = "soil moisture data (left) vs. disease presence data (right)", fig.height=4}
+persp(x, y, `soil moisture`,
+			col = persp_color(`soil moisture`, viridis(n = 9, option = "E")) %>% rev(),
+			theta = 220, phi = 20, zlim = c(0, 30), scale = FALSE)
+
+persp(x, y, disease,
+			col = persp_color(disease, viridis(n = 2, option = "A")) %>% rev(),
+			theta = 220, phi = 20, zlim = c(-2, 10), scale = FALSE)
+```
+
+\newpage
+
+## **OLS**
+
+```{r ols1, echo=FALSE, message=FALSE, fig.show="hold", out.width="50%"}
+lm_estimates %>% knitr::kable()
+lm_extras %>% select(r.squared, adj.r.squared) %>% knitr::kable(caption = "OLS estimates (dep variable = soil moisture)")
+```
+
+```{r ols2, echo=FALSE, message=FALSE, fig.show="hold", out.width="50%", fig.cap = "data (left) vs. OLS fit (right)"}
+persp(x, y, `soil moisture`,
+			col = persp_color(`soil moisture`, viridis(n = 9, option = "E")) %>% rev(),
+			theta = 220, phi = 20, zlim = c(0, 30), scale = FALSE)
+
+persp(x, y, soilm_model,
+			col = persp_color(soilm_model, viridis(n = 9, option = "E")) %>% rev(),
+			theta = 220, phi = 20, zlim = c(0, 30), scale = FALSE)
+```
+
+Looking at the linear regression results of a model in which soil moisture is the dependent variable (Table 2, Figure 4), we can conclude the model does a reasonable job of predicting soil moisture (and phytophthora by extension) presence. However, the averaging nature of this model fails to handle the outlier efficiently and therefore adds too much of an angle to the data plane indicating that almost all soil moisture is concentrated within that one corner. In reality, it is much more spread out. According to the OLS model, we can expect to see around 0.26 and 0.23 unit increases in moisture (on average) for each unit of space we get closer to the corner with the outlier in it, across X and Y axes respectively. 
+
+\newpage
+
+## **Median Polish**
+
+```{r medpolish1, echo=FALSE, message=FALSE, fig.align="center"}
+image(fit, col=terrain.colors(24))
+```
+
+```{r medpolish2, echo=FALSE, message=FALSE, fig.show="hold", out.width="50%", fig.cap = "data (left) vs. median polish fit (right)"}
+persp(x, y, `soil moisture`,
+			col = persp_color(`soil moisture`, viridis(n = 9, option = "E")) %>% rev(),
+			theta = 220, phi = 20, zlim = c(0, 30), scale = FALSE)
+
+persp(x, y, fit,
+			col = persp_color(fit, viridis(n = 9, option = "E")) %>% rev(),
+			theta = 220, phi = 20, zlim = c(0, 30), scale = FALSE)
+```
+
+Median polish seems more robust to the presence of the moisture outlier and does a more reasonable job of modeling the expected layout of the land with moisture projected on top of it. Comparing the median polish fit (right) and the original data (left), in Figure 5, it is clear it does a better job than OLS. but not by much. It captures some local discrepancies across the field, while representing the same overall trend (towards that same corner of high moisture) as OLS.
+
+\newpage
+
+``` {r session, echo = FALSE}
+sessionInfo()
+```
+

@@ -1,0 +1,120 @@
+---
+title: "Lab 3"
+author: "Antonio Jurlina"
+date: "09/27/2020"
+output: pdf_document
+fontsize: 10pt 
+geometry: margin=0.6in
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#-------- packages --------
+library(tidyverse)
+library(lubridate)
+library(here)
+library(tmap)
+library(sf)
+library(sp)
+library(rebus)
+library(rgdal)
+
+#-------- directory and data --------
+paste0(here::here(), "/data") %>% setwd()
+
+wjdata <- read_csv("WJData.csv")
+
+colnames(wjdata) <- tolower(colnames(wjdata))
+
+wjdata <- wjdata %>%
+	mutate(date = dmy(date),
+				 station = as.factor(station))
+
+folders <- dir()[-(str_detect(dir(), pattern = "\\.") %>% which())]
+
+for(i in seq_along(folders)) {
+	first <- folders[i]
+
+	second <- paste0(getwd(), "/", folders[i]) %>%
+		list.files() %>%
+		.[1] %>%
+		str_remove(pattern = DOT %R% one_or_more(WRD))
+
+	assign(folders[i], readOGR(first, second) %>% st_as_sf())
+}
+
+rm(folders, first, second, i, nickel, dha_lung, calcium)
+
+colnames(wj) <- tolower(colnames(wj))
+
+#-------- functions --------
+coeff_of_variation <- function(x) {
+		return(100 * sd(x) / mean(x))
+}
+
+calculate <- function(data, factor, variable) {
+
+	factor1 <- as.name(factor)
+	variable1 <- as.name(variable)
+
+	data <- data %>%
+		select(factor1, variable1) %>%
+		group_by(eval(factor1)) %>%
+		summarize(cv = coeff_of_variation(eval(variable1))) %>%
+		ungroup()
+
+	colnames(data) <- c(eval(factor), paste0("cv_", eval(variable)), "geometry")
+
+	return(data)
+}
+
+#-------- analysis --------
+temp_cv <- calculate(wjdata, factor = "station", variable = "temp")
+salinity_cv <- calculate(wjdata, factor = "station", variable = "sal")
+
+wj <- wj %>%
+	left_join(temp_cv, by = c("location_i" = "station")) %>%
+	left_join(salinity_cv, by = c("location_i" = "station"))
+
+wj <- wj %>%
+	rename("Salinity CV" = cv_sal,
+				 "Temperature CV" = cv_temp)
+```
+
+## **Data**
+
+```{r data, echo=FALSE, message=FALSE, fig.align="center", fig.height=8}
+wj %>%
+	select(station = location_i, "Salinity CV", "Temperature CV") %>%
+	knitr::kable()
+```
+
+## **Temperature CV**
+
+```{r temp, echo=FALSE, message=FALSE, fig.align="center", fig.height=8}
+tmap_style("beaver") +
+tm_shape(casco) +
+	tm_borders(col = "grey60") +
+	tm_fill(col = "#006994") +
+	tm_shape(wj) +
+	tm_dots(size = 0.7, col = "Temperature CV")
+
+```
+
+## **Salinity CV**
+
+```{r sal, echo=FALSE, message=FALSE, fig.align="center", fig.height=8}
+tmap_style("beaver") +
+	tm_shape(casco) +
+	tm_borders(col = "grey60") +
+	tm_fill(col = "#006994") +
+	tm_shape(wj) +
+	tm_dots(size = 0.7, col = "Salinity CV")
+```
+
+\newpage
+
+``` {r session, echo = TRUE}
+sessionInfo()
+```
+

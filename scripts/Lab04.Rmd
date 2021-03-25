@@ -1,0 +1,142 @@
+---
+title: "Lab 4"
+author: "Antonio Jurlina"
+date: "10/05/2020"
+output: pdf_document
+fontsize: 10pt 
+geometry: margin=1in
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#-------- packages --------
+library(tidyverse)
+library(sp)
+library(sf)
+library(tmap)
+library(lubridate)
+library(rebus)
+library(spdep)
+library(classInt)
+library(rgdal)
+library(ggthemes)
+library(lmtest)
+library(tseries)
+
+#-------- directory and data --------
+paste0(here::here(), "/data") %>% setwd()
+
+folders <- dir()[-(str_detect(dir(), pattern = "\\.") %>% which())]
+
+for(i in seq_along(folders)) {
+	first <- folders[i]
+
+	second <- paste0(getwd(), "/", folders[i]) %>%
+		list.files() %>%
+		.[1] %>%
+		str_remove(pattern = DOT %R% one_or_more(WRD))
+
+	assign(folders[i], readOGR(first, second) %>% st_as_sf())
+}
+
+colnames(dha_lung) <- tolower(colnames(dha_lung))
+
+rm(folders, first, second, i, casco, wj, nickel, calcium)
+
+#-------- functions --------
+linear_regression <- function(data, formula){
+	lm(formula, data)
+}
+```
+
+## **Standardized Mortality Ratios for Lung Cancer (SMRLC)**
+
+```{r task1&2, echo=FALSE, message=FALSE, fig.align="center", fig.height=7}
+breaks <- classIntervals(dha_lung$lung_can_s, n = 6, style = "jenks")$brks
+colors <- viridisLite::viridis(length(breaks), option = "E", direction = -1)
+
+ggplot(dha_lung)+
+	geom_sf(aes(fill = lung_can_s), color = 'black', size = 0.01) +
+	scale_fill_gradientn(colors = colors) +
+	theme_map() +
+	labs(fill = "std. cancer mortality ratio") +
+	theme(legend.position = "top")
+```
+
+\newpage
+
+## **OLS Model**
+
+```{r task3, echo=FALSE, message=FALSE, fig.align="center"}
+model <- dha_lung %>% linear_regression(lung_can_s ~ x + y + jarman_sc)
+
+model %>%
+	broom::tidy() %>%
+	knitr::kable()
+
+model %>%
+	broom::glance() %>%
+	knitr::kable()
+```
+
+The OLS model, in which
+
+$$SMRLC = \beta_0 + \beta_1*X + \beta_2*Y + \beta_3*Jarman Index$$
+shows that the spatial effects (X and Y) are not substantial, while the Jarman Index serves as a much better predictor of lung cancer mortality across UK. According to the model, each unit increase in the Index causes a 0.46 unit increase in the standardized lung cancer mortality ratio, on average.
+
+```{r task4, echo=FALSE, message=FALSE, fig.align="center", fig.width=4, fig.height=3}
+bind_rows(bptest(model) %>% broom::tidy(),
+					jarque.bera.test(model$residuals) %>% broom::tidy()) %>%
+	knitr::kable()
+
+ggplot(model) +
+	geom_point(aes(x=.fitted, y=.resid)) +
+	theme_minimal() +
+	geom_hline(aes(yintercept = 0), color = "royalblue")
+```
+
+According to the Breusch-Pagan test, the homoskedasticity of errors null hypothesis is rejected. Further, this is verifiable through the plot of residuals against the fitted values. Finally, the Jarque Bera Test also indicates that the errors are heteroskedastic. This poses a problem for the OLS approach given that the errors are not homoskedastic. It means we cannot rely on the reported values of the standard errors on model estimates, even though the estimates themselves remain unbiased. 
+
+```{r task5, echo=FALSE, message=FALSE, fig.align="center", fig.height=7}
+dha_lung %>%
+	bind_cols(model$residuals) %>%
+	rename("residuals" = "...7") %>%
+	ggplot() +
+		geom_sf(aes(fill = residuals), color = 'black', size = 0.1) +
+		scale_fill_gradient2_tableau() +
+		theme_map() +
+		labs(fill = "residual") +
+		theme(legend.position = "top")
+```
+
+\newpage
+
+## **Moran's I (spatial autocorrelation)**
+
+```{r task6, echo=FALSE, message=FALSE, fig.align="center", fig.height=7}
+weights <- poly2nb(dha_lung)
+weights <- nb2listw(weights, zero.policy = TRUE)
+
+moran.test(dha_lung$lung_can_s, listw = weights, zero.policy = TRUE)  %>% 
+	broom::tidy() %>%
+	knitr::kable()
+
+moran <- moran.mc(dha_lung$lung_can_s, nsim = 99999, listw = weights, zero.policy = TRUE)
+
+moran %>% 
+	broom::tidy() %>%
+	knitr::kable()
+
+moran %>%
+	plot()
+```
+
+The underlying distribution of lung cancer mortality ratios is assumed to be the result of a random spatial process, in our null hypothesis. However, the statistically significant value of 0.56 from Moran's I, has us reject the null and assume that the high values are clustered together due to something other than a simple random spatial process. 
+
+![](/Users/labteam/Google Drive/Graduate School/SIE 512/Week 5/lab4/moran.png)
+
+\newpage
+
+``` {r session, echo = FALSE}
+sessionInfo()
+```

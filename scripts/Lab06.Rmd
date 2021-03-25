@@ -1,0 +1,222 @@
+---
+title: "Lab 6"
+author: "Antonio Jurlina"
+date: "10/29/2020"
+output: pdf_document
+fontsize: 10pt 
+geometry: margin=1in
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#-------- packages --------
+library(tidyverse)
+library(sp)
+library(sf)
+library(rebus)
+library(rgdal)
+library(ggthemes)
+library(gstat)
+library(broom)
+library(nlme)
+library(tseries)
+library(knitr)
+
+#-------- directory and data --------
+paste0(here::here(), "/data") %>% setwd()
+
+folders <- dir()[-(str_detect(dir(), pattern = "\\.") %>% which())]
+
+for(i in seq_along(folders)) {
+	first <- folders[i]
+
+	second <- paste0(getwd(), "/", folders[i]) %>%
+		list.files() %>%
+		.[1] %>%
+		str_remove(pattern = DOT %R% one_or_more(WRD))
+
+	assign(folders[i], readOGR(first, second) %>% st_as_sf())
+}
+
+colnames(calcium) <- tolower(colnames(calcium))
+
+rm(folders, first, second, i, casco, wj, nickel, dha_lung)
+
+#-------- functions --------
+linear_regression <- function(data, formula){
+	lm(formula, data)
+}
+```
+
+```{r math, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center"}
+lm_model <- calcium %>%
+	linear_regression(calcium ~ x + y)
+
+quad_model <- calcium %>%
+	linear_regression(calcium ~ x + y + I(x^2) + I(y^2) + I(x*y))
+
+gls_model <- gls(calcium ~ x + y, correlation = corSpher(form = ~x + y, nugget = TRUE), data = calcium)
+
+models <- list(lm_model, quad_model, gls_model)
+model_names <- c("linear trend", "quadratic trend", "generalized least squares")
+names(models) <- model_names
+
+lm_model <- tidy(models$`linear trend`) %>%
+	mutate(r_squared = glance(models$`linear trend`)[1, 1] %>% pull(),
+				 model = "linear trend")
+quad_model <- tidy(models$`quadratic trend`)  %>%
+	mutate(r_squared = glance(models$`quadratic trend`)[1, 1] %>% pull(),
+				 model = "quadratic trend")
+gls_model <- as_tibble(summary(models$`generalized least squares`)$tTable) %>%
+	mutate(term = c("(Intercept)", "x", "y"),
+				 model = "generalized least squares",
+				 r_squared = NA)
+
+names(gls_model) <- c("estimate", "std.error", "statistic", "p.value", "term", "model")
+
+calcium_complete <- calcium %>%
+	bind_cols(residuals(models$`linear trend`),
+						residuals(models$`quadratic trend`),
+						residuals(models$`generalized least squares`),
+						fitted(models$`linear trend`),
+						fitted(models$`quadratic trend`),
+						fitted(models$`generalized least squares`))
+
+colnames(calcium_complete) <- c("calcium", "x", "y",
+																"linear_residuals", "quadratic_residuals", "gls_residuals",
+																"linear_fitted", "quadratic_fitted", "gls_fitted",
+																"geometry")
+
+calcium_plotting <- calcium_complete %>%
+	pivot_longer(cols = 4:9, names_to = "model", values_to = "value") %>%
+	mutate(model = recode(model,
+												"linear_residuals" = "linear.trend residual",
+												"quadratic_residuals" = "quadratic.trend residual",
+												"gls_residuals" = "generalized.least.squares residual",
+												"linear_fitted" = "linear.trend fitted",
+												"quadratic_fitted" = "quadratic.trend fitted",
+												"gls_fitted" = "generalized.least.squares fitted")) %>%
+	separate("model", into = c("model", "type"), sep = " ") %>%
+	mutate(model = str_replace_all(model, "\\.", " ")) %>%
+	pivot_wider(names_from = "type", values_from = "value")
+
+lapply(models, function(x) jarque.bera.test(residuals(x)) %>% tidy()) %>%
+	bind_rows(.id = "model") -> jarque_berra_results
+
+lapply(models, function(x) shapiro.test(residuals(x)) %>% tidy()) %>%
+	bind_rows(.id = "model") -> shapiro_results
+
+comparison <- tibble(model            = model_names,
+										 `Log Likelihood` = sapply(models, logLik),
+										 AIC              = sapply(models, AIC),
+										 BIC              = sapply(models, BIC))
+
+var1_calcium <- variogram(linear_residuals ~ 1, data = calcium_complete, cutoff = 1200)
+
+covar1_calcium <- variogram(linear_residuals ~ 1, data = calcium_complete, covariogram = T)
+
+vgm1_calcium <- vgm(60, "Sph", 300, 40)
+
+fit_vgm1_calcium <- fit.variogram(var1_calcium, vgm1_calcium)
+
+
+var2_calcium <- variogram(quadratic_residuals ~ 1, data = calcium_complete, cutoff = 1200)
+
+covar2_calcium <- variogram(quadratic_residuals ~ 1, data = calcium_complete, covariogram = T)
+
+vgm2_calcium <- vgm(60, "Sph", 180, 40)
+
+fit_vgm2_calcium <- fit.variogram(var2_calcium, vgm2_calcium)
+```
+
+The data under consideration can be seen in Figure 3. At first glance, there seem to be low values gathered at the top half of given data space with higher content samples being reported in the bottom half. After fitting the linear and quadratic trend models, estimates (Table 3) indicate that these two models account for 28 and 36% of data variation, respectively, with the y axis being relevant in determining soil calcium concentrations. A look at the residuals in Figure 4 indicates that both linear and quadratic models seem to detect some correlation between the changes in the y axis and calcium concentrations. According to Figures 5 and 6, and Tables 5 and 6, the residuals from the linear and quadratic models are not normally distributed, given that both the tests reject the normality assumption. 
+
+An ANOVA comparing the linear and quadratic models shows that the addition of 3 more parameters to the quadratic (compared to the linear) model lead to a significantly improved fit. 
+
+According to Figure 1 and Figure 2, any two calcium samples taken from the given area will be related to each other up to a distance of 300 (linear) and 180 (quadratic). The relatively high nugget indicates the likely presence of measurement errors or not enough data in the sample. The sill for both models can be visually estimated around 40. Fitting variogram models to these two empirical ones gives us fairly similar results (Table 4). Between the two models, adding more parameters to create the quadratic fit somewhat reduced the linear dependence of sampled data.
+
+Finally, creating a generalized least squares model to estimate the spatial relationship of calcium samples across testing locations seems to provide a better fit. First, Table 1 shows that the GLS model has the lowest AIC and BIC values, as well as the highest Log Likelihood. Furthermore, according to Figures 5 and 6, as well as Tables 5 and 6, the residuals from the GLS model seem to be normally distributed (at least we fail to reject the normality hypothesis). Finally, both the x and y variables lose their significance in this approach, indicating an unlikely correlation between calcium and the geographic location of the site (and leaving room for other potential explanatory variables to take that place).
+
+```{r comparison, echo=FALSE, message=FALSE, fig.align="center"}
+comparison %>% kable(caption = "Diagnostic result comparison", digits = 5)
+```
+
+```{r anova, echo=FALSE, message=FALSE, fig.align="center"}
+anova(models$`linear trend`, models$`quadratic trend`) %>% tidy() %>% kable(caption = "ANOVA (linear vs. quadratic trend models)", digits = 5)
+```
+
+```{r estimates, echo=FALSE, message=FALSE, fig.align="center"}
+bind_rows(lm_model, quad_model, gls_model) %>%
+	select(1:7) %>%
+	kable(caption = "Estimates across models", digits = 5)
+```
+
+```{r covariograms, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Covariograms", fig.show="hold"}
+plot(covar1_calcium, pch = 16, main = "linear trend covariogram")
+plot(covar2_calcium, pch = 16, main = "quadratic trend covariogram")
+```
+
+```{r variograms1, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Variograms", fig.show="hold"}
+plot(var1_calcium, pch=16, fit_vgm1_calcium, main = "linear trend semivariogram")
+plot(var2_calcium, pch=16, fit_vgm2_calcium, main = "quadratic trend semivariogram")
+```
+
+```{r variograms2, echo=FALSE, message=FALSE, fig.align="center", fig.cap="Variograms", fig.show="hold"}
+bind_rows(fit_vgm1_calcium %>% mutate(model = "linear trend"), 
+					fit_vgm2_calcium %>% mutate(model = "quadratic trend")) %>% 
+	kable(caption = "Variogram model estimates", digits = 5)
+```
+
+```{r data, echo=FALSE, message=FALSE, fig.align="center", fig.cap = "Calcium data"}
+calcium_plotting %>%
+	ggplot(aes(x, y)) +
+	geom_point(aes(color = calcium), size = 3) +
+	theme_light() +
+	scale_color_gradient2_tableau() +
+	theme(legend.position = "bottom")
+```
+
+```{r residuals, echo=FALSE, message=FALSE, fig.align="center", fig.cap = "Model residuals"}
+calcium_plotting %>%
+	ggplot(aes(x, y)) +
+	geom_point(aes(color = residual), size = 3) +
+	facet_wrap(~model) +
+	theme_light() +
+	scale_color_gradient2_tableau() +
+	theme(legend.position = "bottom")
+```
+
+```{r distributions1, echo=FALSE, message=FALSE, fig.align="center", fig.cap = "Distributions of model residuals"}
+calcium_plotting %>%
+	ggplot(aes(residual, color = model, fill = model)) +
+	geom_histogram(show.legend = FALSE, alpha = 0.7) +
+	facet_wrap(~model) +
+	theme_light() +
+	scale_color_ptol() +
+	scale_fill_ptol() +
+	theme(legend.position = "bottom")
+```
+
+```{r distributions2, echo=FALSE, error=FALSE, message=FALSE, warning=FALSE, fig.align="center"}
+jarque_berra_results[, -5] %>% kable(caption = "Jarque Bera test", 
+																		 digits = 5)
+																		  
+shapiro_results[, -4] %>% kable(caption = "Shapiro-Wilk normality test", 
+																digits = 5)
+```
+
+```{r heteroskedasticity, echo=FALSE, message=FALSE, fig.align="center", fig.cap = "Residuals vs. fitted values across all models"}
+calcium_plotting %>%
+	ggplot(aes(fitted, residual, color = model)) +
+	geom_point(show.legend = FALSE) +
+	facet_wrap(~model) +
+	theme_light() +
+	scale_color_ptol() +
+	theme(legend.position = "bottom")
+```
+
+\newpage
+
+``` {r session, echo = FALSE}
+sessionInfo()
+```

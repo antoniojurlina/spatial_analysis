@@ -1,0 +1,177 @@
+---
+title: "Lab 5"
+author: "Antonio Jurlina"
+date: "10/17/2020"
+output: pdf_document
+fontsize: 10pt 
+geometry: margin=1in
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#-------- packages --------
+library(tidyverse)
+library(sp)
+library(sf)
+library(tmap)
+library(lubridate)
+library(rebus)
+library(spdep)
+library(classInt)
+library(rgdal)
+library(ggthemes)
+library(lmtest)
+library(tseries)
+library(spatialreg)
+library(broom)
+library(knitr)
+
+#-------- directory and data --------
+paste0(here::here(), "/data") %>% setwd()
+
+folders <- dir()[-(str_detect(dir(), pattern = "\\.") %>% which())]
+
+for(i in seq_along(folders)) {
+	first <- folders[i]
+
+	second <- paste0(getwd(), "/", folders[i]) %>%
+		list.files() %>%
+		.[1] %>%
+		str_remove(pattern = DOT %R% one_or_more(WRD))
+
+	assign(folders[i], readOGR(first, second) %>% st_as_sf())
+}
+
+colnames(dha_lung) <- tolower(colnames(dha_lung))
+
+rm(folders, first, second, i, casco, wj, nickel, calcium)
+
+#-------- functions --------
+linear_regression <- function(data, formula, family = "gaussian"){
+	glm(formula, family = family, data)
+}
+```
+
+```{r math, echo=FALSE, message=FALSE, warning=FALSE, fig.align="center"}
+model <- dha_lung %>%
+	linear_regression(lung_can_s ~ x + y + jarman_sc)
+
+weights <- poly2nb(dha_lung)
+weights <- nb2listw(weights, zero.policy = TRUE, style = "W")
+
+lapply(lm.LMtests(model, listw = weights, zero.policy = TRUE, test = "all"), tidy) %>%
+	bind_rows(.id = "test") -> lm_results
+
+sp_error_model <- errorsarlm(model, listw = weights, zero.policy = TRUE)
+
+sp_lag_model <- lagsarlm(lung_can_s ~ x + y + jarman_sc, dha_lung, listw = weights, zero.policy = TRUE)
+
+car_model <- spautolm(model, listw = weights, family = "CAR", zero.policy = TRUE)
+
+model_names <- c("OLS", "SARerr", "SARlag", "CAR")
+models <- list(model, sp_error_model, sp_lag_model, car_model)
+names(models) <- model_names
+
+comparison <- tibble(model            = model_names,
+										 `Log Likelihood` = sapply(models, logLik),
+										 AIC              = sapply(models, AIC),
+										 BIC              = sapply(models, BIC))
+
+lapply(models, function(x) moran.test(residuals(x), weights, zero.policy = TRUE) %>% tidy()) %>%
+	bind_rows(.id = "model") -> moran_results
+
+lapply(models, function(x) jarque.bera.test(residuals(x)) %>% tidy()) %>%
+	bind_rows(.id = "model") -> jarque_berra_results
+
+lapply(models, function(x) shapiro.test(residuals(x)) %>% tidy()) %>%
+	bind_rows(.id = "model") -> shapiro_results
+
+bind_rows(models$OLS %>% bptest() %>% tidy(),
+					models$SARerr %>% bptest.sarlm() %>% tidy(),
+					models$SARlag %>% bptest.sarlm() %>% tidy()) %>%
+	mutate(model = c("OLS", "SARerr", "SARlag")) %>%
+	select(model, statistic, p.value, parameter) -> bp_results
+
+model_outputs <- lapply(models, residuals) %>%
+	bind_rows(.id = "model") %>%
+	pivot_longer(cols = 2:191, names_to = "row", values_to = "residual") %>%
+	left_join(lapply(models, fitted) %>%
+							bind_rows(.id = "model") %>%
+							pivot_longer(cols = 2:191, names_to = "row", values_to = "fitted"),
+						by = c("model", "row"))
+
+
+```
+
+According to all the gathered statistics, model analyses and tests, the model choice can be narrowed down to two, the simultaneous autoregressive error model (SARerr) and the simultaneous autoregressive lag model (SARlag). The  conditionally autoregressive model (CAR) is only slightly less efficient, while the ordinary least squares (OLS) approach provides the least satisfactory statistics. Both the SARerr and the SARlag have highest Log Likelihood, and lowest AIC and BIC criteria values, relative to the OLS and the CAR models (Table 1).
+
+First, the Lagrange Multiplier test (Table 2) identifies the spatial error and spatial lag models (besides the SARMA approach which is not under consideration here) as the most viable ones. The low p-values suggest that adopting the OLS approach within a more expansive framework (SARerr and SARlag) would add statistically significant improvements to model fit.
+
+Next, focusing on the normality of the residuals, we can use the results from Table 4 and Figure 1 to understand the distributions. Shapiro-Wilk normality test outcomes indicate a strong likelihood that residuals across all four models are not normally distributed. Furthermore, the Jarque Bera test (Table 3) confirms this as well. 
+
+Unfortunately, it seems that the heteroskedasticity of the residuals is present across all 4 models (Figure 2). This is is further confirmed with a Breusch-Pagan test (Table 5) rejecting the homoskedasticity hypothesis on OLS, SARerr and SARlag models. Unfortunately, a valid Breusch-Pagan test for a spautolm object in R has not been sufficiently developed yet and the available approaches might confuse spatial autocorrelation with heteroskedasticity. 
+
+Moran's I test (Table 6) strongly indicates the presence of spatial autocorrelation in the OLS approach, as well as the possibility of some in the CAR approach. However, it fails to reject the absence of spatial autocorrelation for both the SARerr and SARlag models.
+
+Finally, the estimates across all four models are fairly similar (Tables 7-10). The X value is not estimated with significance, while Y and the Jarman Index are consistently significant, even at the 99% level. This is to be expected, as our main worry lies with the accuracy of the standard errors, in the presence of aforementioned issues. 
+
+```{r comparison, echo=FALSE, message=FALSE, fig.align="center", fig.cap="text"}
+comparison %>% kable(caption = "Diagnostic result comparison", digits = 5)
+```
+
+\newpage
+
+```{r lmtest, echo=FALSE, message=FALSE, fig.align="center"}
+lm_results[, -5] %>% kable(caption = "Lagrange multiplier diagnostics for spatial dependence", digits = 5)
+```
+
+```{r distributions1, echo=FALSE, error=FALSE, message=FALSE, warning=FALSE, fig.align="center"}
+jarque_berra_results[, -5] %>% kable(caption = "Jarque Bera test", 
+																		 digits = 5)
+																		  
+shapiro_results[, -4] %>% kable(caption = "Shapiro-Wilk normality test", 
+																digits = 5)
+```
+
+```{r distributions2, echo=FALSE, message=FALSE, fig.align="center", fig.cap = "Distributions of model residuals"}
+model_outputs %>%
+	ggplot(aes(residual, color = model, fill = model)) +
+		geom_histogram(position = "dodge", alpha = 0.7, show.legend = F) +
+		facet_wrap(~model) +
+		scale_color_ptol() +
+		scale_fill_ptol() +
+		theme_light()
+```
+
+```{r bptest, echo=FALSE, message=FALSE, fig.align="center"}
+bp_results %>% kable(caption = "Breusch-Pagan test", digits = 5)
+```
+
+```{r heteroskedasticity, echo=FALSE, message=FALSE, fig.align="center", fig.cap = "Residuals vs. fitted values across all models"}
+model_outputs %>%
+	ggplot(aes(fitted, residual, color = model, fill = model)) +
+	geom_point(alpha = 0.7, show.legend = F) +
+	facet_wrap(~model) +
+	scale_color_ptol() +
+	scale_fill_ptol() +
+	theme_light()
+```
+
+```{r moran, echo=FALSE, message=FALSE, fig.align="center"}
+moran_results[, -c(7:8)] %>% kable(caption = "Moran I test under randomisation", digits = 5)
+```
+
+\newpage
+
+```{r estimates, echo=FALSE, message=FALSE, fig.align="center"}
+model %>% tidy() %>% kable(caption = "Ordinary least squares model (OLS)", digits = 5)
+sp_error_model %>% tidy() %>% kable(caption = "Simultaneous autoregressive error model (SARerr)", digits = 5)
+sp_lag_model %>% tidy() %>% kable(caption = "Simultaneous autoregressive lag model (SARlag)", digits = 5)
+summary(car_model)$Coef %>% kable(caption = "Conditionally autoregressive model (CAR)", digits = 5)
+```
+
+\newpage
+
+``` {r session, echo = FALSE}
+sessionInfo()
+```

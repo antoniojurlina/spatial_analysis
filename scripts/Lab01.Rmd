@@ -1,0 +1,159 @@
+---
+title: "Lab 1"
+author: "Antonio Jurlina"
+date: "09/08/2020"
+output: pdf_document
+fontsize: 10pt 
+geometry: margin=0.6in
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+#-------- packages --------
+library(tidyverse)
+library(lubridate)
+library(ggthemes)
+library(here)
+library(tmap)
+library(sf)
+library(sp)
+library(rebus)
+library(rgdal)
+library(e1071)
+
+#-------- directory and data --------
+paste0(here::here(), "/data") %>% setwd()
+
+wjdata <- read_csv("WJData.csv")
+
+colnames(wjdata) <- tolower(colnames(wjdata))
+
+wjdata <- wjdata %>%
+	mutate(date = dmy(date),
+				 station = as.factor(station))
+
+folders <- dir()[-(str_detect(dir(), pattern = "\\.") %>% which())]
+
+for(i in seq_along(folders)) {
+	first <- folders[i]
+
+	second <- paste0(getwd(), "/", folders[i]) %>%
+		list.files() %>%
+		.[1] %>%
+		str_remove(pattern = DOT %R% one_or_more(WRD))
+
+	assign(folders[i], readOGR(first, second) %>% st_as_sf())
+}
+
+rm(folders, first, second, i, calcium, dha_lung, nickel)
+
+wj <- wj %>%
+	left_join(wjdata %>%
+							group_by(station) %>%
+							summarize(`Mean Salinity` = mean(sal, na.rm = TRUE)) %>%
+							ungroup(),
+						by = c("LOCATION_I" = "station"))
+
+months <- format(ISOdatetime(2000,1:12,1,0,0,0),"%b")
+```
+
+## **Data Summary**
+
+```{r summary, echo=FALSE, message=FALSE, fig.align="center"}
+wjdata %>%
+pivot_longer(cols = 5:6, names_to = "variable", values_to = "value") %>%
+	mutate(variable = recode(variable,
+													 "sal" = "salinity",
+													 "temp" = "temperature")) %>%
+	group_by(variable) %>%
+	summarize(min = min(value),
+						average = mean(value),
+						max = max(value),
+						variance = var(value),
+						kurtosis = kurtosis(value),
+						skewness = skewness(value))%>%
+	knitr::kable()
+```
+
+Looking at the summary data we can expect the distribution of monthly temperatures (over many years and measuring stations) to be fairly symmetrical due to the low skewness and kurtosis. These values would imply higher spread around the average, as evident by the reported variance. For salinity, extremely high kurtosis indicates much data falling on, or near, the average, further confirmed by low variance. This distribution is skeewed left. Given the similar number of observations range they encompass, comparing them to one another holds up in this particular context. Most salinity variability is expected to be location based. Measurements nearer to freshwater sources are going to have constantly lower readings. Temperature we expect to vary seasonally and also much more than salinity. This fact is reflected in the data summary. 
+
+\newpage
+
+## **Histogram**
+
+```{r histogram, echo=FALSE, message=FALSE, fig.align="center", fig.height=9}
+wjdata %>%
+	pivot_longer(cols = 5:7, names_to = "variable", values_to = "value") %>%
+	mutate(variable = recode(variable,
+													 "sal" = "salinity",
+													 "score" = "fecal coliform score",
+													 "temp" = "temperature")) %>%
+	ggplot(aes(x = value, color = variable, fill = variable)) +
+	geom_histogram(show.legend = F) +
+	facet_wrap(~variable, scales = "free", ncol = 1) +
+	scale_color_ptol() +
+	scale_fill_ptol() +
+	theme_par() +
+	theme(axis.title.y = element_blank(),
+				axis.title.x = element_blank())
+```
+
+Fecal coliform score distribution is heavily skeewed right, a good indicator of water cleanliness as most values are indeed grouped around 0, with several severe outliers. Given the detail of the data provided, these should be easy to pinpoint. Salinity measurements form a distribution that skews slightly left, with a sharp peak around the average (high kurtosis) as there is not much variance to this data (except certain outliers). The pattern here, as noted before, is likely to be spatial. Measurements performed near locations where mixing of fresh water with the sea is occurring are bound to have much lower salinity scores. Finally, the distribution of temperature measurements is distributed fairly symmetrically with higher variance that the previous two. This variance can be attributed to temporal changes, as tempertures measured across different months will reflect the expected seasonal patterns.  
+
+\newpage
+
+## **Salinity Boxplot**
+
+```{r salinity, echo=FALSE, message=FALSE, fig.align="center", fig.height=8, fig.width=9}
+wjdata %>%
+	mutate(month = months[month(date)]) %>%
+	ggplot(aes(x = sal, y = station)) +
+	geom_boxplot() +
+	facet_wrap(~ factor(month, levels = months),
+						 nrow = 2) +
+	theme_par() +
+	labs(x = "salinity",
+			 title = "Monthly Salinity")
+```
+
+The salinity boxplots give further evidence to claims brought before - this data is highly centralized around a stable mean, regardless of the season, varying mostly by station. One of the stations (WJ018.00) reports a fairly unusual streak of outliers but this is to be expected as well, given it's location. The map (shown below) confirms this station as positioned quite close to a river mouth. This would account for the low salinity scores.  
+
+\newpage
+
+## **Temperature Boxplot**
+
+```{r temperature, echo=FALSE, message=FALSE, fig.align="center", fig.height=8, fig.width=9}
+wjdata %>%
+	mutate(month = months[month(date)]) %>%
+	ggplot(aes(x = temp, y = station)) +
+	geom_boxplot() +
+	facet_wrap(~factor(month, levels = months),
+						 nrow = 2) +
+	theme_par() +
+	labs(x = "temperature",
+			 title = "Monthly Temperature")
+```
+
+The temperature boxplots depict a clear temporal pattern. As time flows from January onward to August, average temperatures keep rising. After this point, they slowly return back to where they started, as winter settles back in. There are outliers, but all stations move around in unison, on average 
+
+\newpage
+
+## **Map**
+
+```{r map, echo=FALSE, message=FALSE, fig.align="center", fig.height=8, fig.width = 8}
+tmap_style("beaver")
+
+tm_shape(casco) +
+	tm_borders(col = "grey60") +
+	tm_fill(col = "#006994") +
+tm_shape(wj) +
+	tm_dots(size = 0.7, col = "Mean Salinity") +
+	tm_text("LOCATION_I", auto.placement = 0.6, fontfamily = "serif", fontface = "bold")
+```
+
+\newpage
+
+``` {r session, echo = TRUE}
+sessionInfo()
+```
+
