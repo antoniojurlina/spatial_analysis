@@ -1,5 +1,4 @@
-# spatial_analysis
-Spatial Analysis
+# Spatial Analysis
 
 This repository introduces techniques for the statistical analysis of spatial data. It covers characterization of spatial data, and techniques for visualizing, exploring and modeling spatial data distributed as point patterns, geostatistical data, and area or lattice data, and methods and problems in spatial data sampling. 
 
